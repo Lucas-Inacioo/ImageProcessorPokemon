@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 public class Pokemon implements PlugIn {
 
@@ -39,6 +40,38 @@ public class Pokemon implements PlugIn {
             return;
         }
 
+        // Measure time for comparison with compression
+        long startTimeCompressed = System.nanoTime();
+        boolean isRepeatedCompressed = compareWithCompression(newImage, listOfFiles, threshold);
+        long endTimeCompressed = System.nanoTime();
+
+        // Measure time for comparison without compression
+        long startTimeUncompressed = System.nanoTime();
+        boolean isRepeatedUncompressed = compareWithoutCompression(newImage, listOfFiles, threshold);
+        long endTimeUncompressed = System.nanoTime();
+
+        // Output the results
+        if (isRepeatedCompressed) {
+            IJ.showMessage("Resultado", "Repeated image (Compressed)");
+        } else {
+            IJ.save(newImage, folderPath + File.separator + "new_image_" + System.currentTimeMillis() + ".png");
+            IJ.showMessage("Resultado", "New image (Compressed)");
+        }
+
+        if (isRepeatedUncompressed) {
+            IJ.showMessage("Resultado", "Repeated image (Uncompressed)");
+        } else {
+            IJ.save(newImage, folderPath + File.separator + "new_image_" + System.currentTimeMillis() + "_uncompressed.png");
+            IJ.showMessage("Resultado", "New image (Uncompressed)");
+        }
+
+        // Display timing results
+        IJ.showMessage("Timing Results",
+                "Comparison with compression: " + (endTimeCompressed - startTimeCompressed) / 1_000_000 + " ms\n" +
+                "Comparison without compression: " + (endTimeUncompressed - startTimeUncompressed) / 1_000_000 + " ms");
+    }
+
+    private boolean compareWithCompression(ImagePlus newImage, File[] listOfFiles, int threshold) {
         // Compress the new image using RLE
         List<int[]> compressedNewImage = compressImage(newImage);
         boolean isRepeated = false;
@@ -59,12 +92,45 @@ public class Pokemon implements PlugIn {
             executor.shutdown();
         }
 
-        if (isRepeated) {
-            IJ.showMessage("Resultado", "Repeated image");
-        } else {
-            //IJ.save(newImage, folderPath + File.separator + "new_image_" + System.currentTimeMillis() + ".png");
-            IJ.showMessage("Resultado", "New image");
+        return isRepeated;
+    }
+
+    private boolean compareWithoutCompression(ImagePlus newImage, File[] listOfFiles, int threshold) {
+        ImageProcessor newIp = newImage.getProcessor();
+        int newWidth = newImage.getWidth();
+        int newHeight = newImage.getHeight();
+        boolean isRepeated = false;
+
+        for (File file : listOfFiles) {
+            ImagePlus imp = IJ.openImage(file.getAbsolutePath());
+            if (imp == null) continue;
+
+            if (newWidth != imp.getWidth() || newHeight != imp.getHeight()) {
+                continue;
+            }
+
+            ImageProcessor ip = imp.getProcessor();
+            int differentPixels = 0;
+
+            outerLoop:
+            for (int y = 0; y < newHeight; y++) {
+                for (int x = 0; x < newWidth; x++) {
+                    if (newIp.getPixel(x, y) != ip.getPixel(x, y)) {
+                        differentPixels++;
+                        if (differentPixels >= threshold) {
+                            break outerLoop;
+                        }
+                    }
+                }
+            }
+
+            if (differentPixels < threshold) {
+                isRepeated = true;
+                break;
+            }
         }
+
+        return isRepeated;
     }
 
     private List<int[]> compressImage(ImagePlus image) {
@@ -162,6 +228,7 @@ public class Pokemon implements PlugIn {
         }
     }
 
+    @SuppressWarnings("unchecked")
     private List<int[]> loadCompressedImage(File file) {
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(file))) {
             return (List<int[]>) ois.readObject();
